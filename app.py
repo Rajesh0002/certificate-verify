@@ -209,7 +209,24 @@ table{width:100%;border-collapse:collapse;margin:14px 0}th,td{padding:9px;border
 {% if r.period %}<tr><th>Period</th><td>{{r.period}}</td></tr>{% endif %}<tr><th>Certificate no.</th><td>{{r.cert_no}}</td></tr>
 <tr><th>Status</th><td style="color:var(--ok);font-weight:700">VALID</td></tr></table>
 <h2 style="margin-top:6px">Certificate</h2>
-{% if r.ext=='.pdf' %}<iframe class=doc src="{{url_for('file', cid=cid)}}" title="Certificate"></iframe>
+{% if r.ext=='.pdf' %}<div id=pdfview data-src="{{url_for('file', cid=cid)}}"><p class=muted id=pdfmsg>Loading certificate...</p></div>
+<script src="{{url_for('static', filename='pdf.min.js')}}"></script>
+<script>
+(async()=>{
+  const box=document.getElementById('pdfview'),msg=document.getElementById('pdfmsg');
+  try{
+    pdfjsLib.GlobalWorkerOptions.workerSrc="{{url_for('static', filename='pdf.worker.min.js')}}";
+    const pdf=await pdfjsLib.getDocument(box.dataset.src).promise;
+    const w=box.clientWidth,dpr=Math.min(window.devicePixelRatio||1,3);
+    for(let i=1;i<=pdf.numPages;i++){
+      const page=await pdf.getPage(i),base=page.getViewport({scale:1}),scale=w/base.width,vp=page.getViewport({scale:scale*dpr});
+      const c=document.createElement('canvas');c.className='doc';c.width=vp.width;c.height=vp.height;c.style.width=w+'px';c.style.height=(vp.height/dpr)+'px';c.style.marginBottom='8px';
+      box.appendChild(c);await page.render({canvasContext:c.getContext('2d'),viewport:vp}).promise;
+    }
+    msg.remove();
+  }catch(e){msg.textContent='Could not show the preview here. Use the "Open full size" button below.';}
+})();
+</script>
 {% else %}<img class=doc src="{{url_for('file', cid=cid)}}" alt="Certificate">{% endif %}
 <p><a class=btn href="{{url_for('file', cid=cid)}}" target=_blank>Open full size</a></p></div>
 {% endif %}</div></body></html>"""
