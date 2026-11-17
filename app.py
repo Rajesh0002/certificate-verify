@@ -159,6 +159,16 @@ ADMIN = """<!doctype html><html><head><meta charset=utf-8><meta name=viewport co
 <button type=button onclick="dlQr('{{id}}','{{r.cert_no}}')">Download QR</button>
 <form method=post action="{{url_for('toggle', cid=id)}}" style="display:inline"><button>{{'Restore' if r.revoked else 'Revoke'}}</button></form>
 <form method=post action="{{url_for('delete', cid=id)}}" style="display:inline" onsubmit="return confirm('Delete permanently?')"><button>Delete</button></form>
+<details style="margin-top:8px"><summary class=muted style="cursor:pointer">Edit details / replace file (QR stays the same)</summary>
+<form method=post action="{{url_for('edit', cid=id)}}" enctype=multipart/form-data>
+<div class=grid>
+<div><label>Student name</label><input type=text name=name value="{{r.name}}" required maxlength=120></div>
+<div><label>Course</label><input type=text name=course value="{{r.course}}" maxlength=200></div>
+<div><label>Period</label><input type=text name=period value="{{r.period}}" maxlength=100></div>
+<div><label>Certificate no.</label><input type=text name=cert_no value="{{r.cert_no}}" required maxlength=60></div>
+<div><label>Institute</label><input type=text name=institute value="{{r.institute}}" maxlength=150></div>
+<div><label>New file (leave empty to keep the current one)</label><input type=file name=file accept=".pdf,.png,.jpg,.jpeg"></div>
+</div><p><button class=primary>Save changes</button></p></form></details>
 </div></div>
 {% else %}<p class=muted>Nothing uploaded yet.</p>{% endfor %}
 </div></div>
@@ -267,6 +277,43 @@ def upload():
         (FILES / (cid + ext)).unlink(missing_ok=True)
         abort(400, "This certificate number already exists.")
     return redirect(url_for("admin", msg="Uploaded. Your QR code and link are in the list below."))
+
+
+@app.post("/admin/edit/<cid>")
+@admin_only
+def edit(cid):
+    r = q("SELECT * FROM certificates WHERE id=%s", (cid,), one=True)
+    if not r:
+        abort(404)
+    name = request.form.get("name", "").strip()
+    cert_no = request.form.get("cert_no", "").strip()[:60]
+    if not name or not cert_no:
+        abort(400, "Name and certificate number are required.")
+    ext, f = r["ext"], request.files.get("file")
+    if f and f.filename:
+        new_ext = Path(f.filename).suffix.lower()
+        head = f.stream.read(8)
+        f.stream.seek(0)
+        ok = (new_ext == ".pdf" and head.startswith(b"%PDF")) or (new_ext == ".png" and head.startswith(b"\x89PNG")) \
+            or (new_ext in (".jpg", ".jpeg") and head.startswith(b"\xff\xd8"))
+        if not ok:
+            abort(400, "Only a real PDF, PNG or JPG file is allowed.")
+        f.save(FILES / (cid + ".new"))          # write first, switch only after the DB update succeeds
+        ext_new = new_ext
+    else:
+        ext_new = None
+    try:
+        q("UPDATE certificates SET name=%s, course=%s, period=%s, cert_no=%s, institute=%s, ext=%s WHERE id=%s",
+          (name[:120], request.form.get("course", "").strip()[:200], request.form.get("period", "").strip()[:100],
+           cert_no, request.form.get("institute", "").strip()[:150], ext_new or ext, cid), write=True)
+    except myerr.IntegrityError:
+        (FILES / (cid + ".new")).unlink(missing_ok=True)
+        abort(400, "This certificate number already exists.")
+    if ext_new:
+        (FILES / (cid + ".new")).replace(FILES / (cid + ext_new))
+        if ext_new != ext:
+            (FILES / (cid + ext)).unlink(missing_ok=True)
+    return redirect(url_for("admin", msg="Saved. The QR code and link are unchanged."))
 
 
 @app.post("/admin/toggle/<cid>")
